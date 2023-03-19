@@ -91,11 +91,82 @@ class RstpDownloader < TaskAsync
 	end
 end
 
+# Patch for ThreadPool
+class ThreadPool
+	def getNumberOfRunningTasks
+		result = 0
+		@threads.each do |aTaskExecutor|
+			result += 1 if aTaskExecutor.isRunning()
+		end
+		return result
+	end
+end
 
+
+class FileQuater < TaskAsync
+	def initialize(configs, taskMan, period=3600)
+		super("FileQuater")
+		@configs = configs
+		@taskMan = taskMan
+		@period = period
+	end
+
+	def self.convertFmtToGrep(fmt)
+		fmt = fmt.gsub("\-", "\\-")
+		fmt = fmt.gsub("\.", "\\.")
+		fmt = fmt.gsub("%Y", "[0-9]+")
+		fmt = fmt.gsub("%y", "[0-9]+")
+		fmt = fmt.gsub("%m", "[0-9]+")
+		fmt = fmt.gsub("%d", "[0-9]+")
+		fmt = fmt.gsub("%H", "[0-9]+")
+		fmt = fmt.gsub("%M", "[0-9]+")
+		fmt = fmt.gsub("%S", "[0-9]+")
+		return fmt
+	end
+
+	DEF_POLLING_PERIOD = 5
+	DEF_ERASE_MARGIN = 0.2
+
+	def self.doQuater(path, filter, keep)
+		path = File.expand_path(path)
+		filter = convertFmtToGrep(filter)
+
+		result = []
+		FileUtil.iteratePath( path, filter, result, false, false, 1)
+		result = result.sort{|a,b| b<=>a}
+
+		n = 0
+		result.each do |aResult|
+			FileUtils.rm_f(aResult) if n >= keep
+			sleep DEF_ERASE_MARGIN # This save the bandwidth of storage for actual download
+			n = n + 1
+		end
+	end
+
+	def execute
+		sleep DEF_POLLING_PERIOD
+		timingDo = @period / DEF_POLLING_PERIOD
+		count = 0
+
+		while( @taskMan.getNumberOfRunningTasks() > 1 ) do
+			# assume the other rstp downloading task is running
+			sleep DEF_POLLING_PERIOD
+			count += 1
+			if count % timingDo == 0 then
+				# this is timing to do quater
+				@configs.each do | key, aCamera |
+					doQuater( aCamera["output"], aCamera["fileFormat"], aCamera["keep"].to_i )
+					sleep DEF_POLLING_PERIOD
+				end
+			end
+		end
+		_doneTask()
+	end
+end
 
 options = {
-	:verbose => false,
-	:configFile => "config.json"
+	:configFile => "config.json",
+	:quaterPeriod => 3600
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -105,18 +176,19 @@ opt_parser = OptionParser.new do |opts|
 		options[:configFile] = configFile.to_s
 	end
 
-	opts.on("", "--verbose", "Enable verbose status output") do
-		options[:verbose] = true
+	opts.on("-q", "--quaterPeriod=", "Set quarter period sec. (default:#{options[:quaterPeriod]})") do |quaterPeriod|
+		options[:quaterPeriod] = quaterPeriod.to_i
 	end
 end.parse!
 
 
 config = JsonUtil.loadJsonFile( options[:configFile], false, true)
-taskMan = ThreadPool.new( config.length )
+taskMan = ThreadPool.new( config.length + 1)
 
 config.each do | key, aCamera |
 	taskMan.addTask( RstpDownloader.new( aCamera ) )
 end
+taskMan.addTask( FileQuater.new( config, taskMan, options[:quaterPeriod] ) )
 
 taskMan.executeAll()
 taskMan.finalize()

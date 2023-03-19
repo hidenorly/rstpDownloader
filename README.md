@@ -1,8 +1,8 @@
 # rstpDownloader
 
-This is download rstp:// stream as .mp4.
+This is downloader for rstp:// stream as .mp4.
 This is intended to store security camera's video stream as .mp4.
-Usually some of security cameras is installed, this tool supports multiple download.
+Usually multiple security cameras are installed, then this tool supports multiple download.
 
 
 # Requirements
@@ -73,7 +73,7 @@ $ sudo systemctrl restart rstp_downloader
 
 # TODO
 
-* [] Add ubuntu's service to manage with systemctl
-* [] Add installer
-* [] Add keep files (disk quota) to enable cyclic store
+* [x] Add ubuntu's service to manage with systemctl
+* [x] Add installer
+* [x] Add keep files (disk quota) to enable cyclic store
 * [] Upload to youtube?
