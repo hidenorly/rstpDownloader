@@ -70,6 +70,20 @@ $ sudo systemctrl status rtsp_downloader
 $ sudo systemctrl restart rtsp_downloader
 ```
 
+# Optional
+
+```
+$ sudo vim /etc/systemd/system/rtsp_downloader.service
+```
+
+```/etc/systemd/system/rtsp_downloader.service
+ExecStart=/usr/bin/ruby /opt/rtspdownloader/rtspDownloader.rb -c /var/opt/rtspdownloader/config.json -r "2 5 * * *"
+```
+
+```
+$ systemctl enable rtsp_downloader
+$ systemctl restart rtsp_downloader
+```
 
 # TODO
 

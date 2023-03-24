@@ -230,7 +230,9 @@ class TaskExecutor
 					while(@isRunnable) do
 						@task = @taskPool.dequeue()
 						if @task!=nil then
+							@task.running = true
 							@task.execute()
+							@task.false = true
 						else
 							sleep 0.1
 						end

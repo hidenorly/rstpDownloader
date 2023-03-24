@@ -39,21 +39,108 @@ class JsonUtil
 	def self.loadJsonFile(filePath, ensureJson=false, removeRemark=false)
 		result = {}
 		body = FileUtil.readFileAsArray(filePath)
-		body = removeRemark(body) if removeRemark
-		body = body.join("\n")
-		body = StrUtil.ensureJson(body) if ensureJson
-		begin
-			result = JSON.parse(body)
-		rescue => ex
+		if !body.empty? then
+			body = removeRemark(body) if removeRemark
+			body = body.join("\n")
+			body = StrUtil.ensureJson(body) if ensureJson
+			begin
+				result = JSON.parse(body)
+			rescue => ex
+			end
 		end
 		return result
 	end
 end
 
 
-class RstpDownloader < TaskAsync
+class CronUtil
+	def self.parse(cronLine)
+		result= nil
+		fields = cronLine.to_s.strip.split(/\s+/)
+		if fields.length == 5 then
+			minute = parseField(fields[0], 0, 59)
+			hour = parseField(fields[1], 0, 23)
+			dom = parseField(fields[2], 1, 31)
+			month = parseField(fields[3], 1, 12)
+			dow = parseField(fields[4], 0, 6)
+
+			result = {
+				:minute => minute,
+				:hour => hour,
+				:dayOfMonth => dom,
+				:month => month,
+				:dayOfWeek => dow
+			}
+		else
+			puts "Invalid cron format: expect m h dom mon dow" if cronLine
+		end
+		return result
+	end
+
+	def self.parseField(field, minVal, maxVal)
+		result = nil
+		if field=="*" then
+			result = (minVal..maxVal).to_a
+		elsif field.include?("/") then
+			parts = field.split("/")
+			startVal = (parts[0] != "*") ? parseRange(parts[0], minVal, maxVal) : minVal
+			result = (startVal..maxVal).step(parts[1].to_i).to_a
+		else
+			result = parseRange(field, minVal, maxVal)
+		end
+		return result
+	end
+
+	def self.parseRange(field, minVal, maxVal)
+		startVal = minVal
+		endVal = maxVal
+
+		if field.include?("-") then
+			parts = field.split("-")
+			startVal = parts[0].to_i
+			endVal = parts[1].to_i
+		else
+			startVal = endVal = field.to_i
+		end
+
+		if startVal < minVal || endVal > maxVal then
+			puts ("Invalid value: #{field}. expect the range between #{minVal} and #{maxVal}")
+		end
+
+		return (startVal..endVal).to_a
+	end
+
+	def self.isTriggered(cronFields)
+		now = Time.now()
+
+		return cronFields[:minute].include?(now.min) &&
+			cronFields[:hour].include?(now.hour) &&
+			cronFields[:dayOfMonth].include?(now.day) &&
+			cronFields[:month].include?(now.month) &&
+			cronFields[:dayOfWeek].include?(now.wday)
+	end
+end
+
+
+class ShutdownTaskToRestart < TaskAsync
+	def initialize(cronFields)
+		super("ShutdownTaskToRestart #{cronFields}")
+		@cronFields = cronFields
+	end
+
+	def execute
+		while( @running  ) do
+			sleep 1
+			exit() if CronUtil.isTriggered(@cronFields)
+		end
+		_doneTask()
+	end
+end
+
+
+class RtspDownloader < TaskAsync
 	def initialize(config)
-		super("RstpDownloader #{config}")
+		super("RtspDownloader #{config}")
 		@config = config
 	end
 
@@ -149,7 +236,7 @@ class FileQuater < TaskAsync
 		count = 0
 
 		while( @taskMan.getNumberOfRunningTasks() > 1 ) do
-			# assume the other rstp downloading task is running
+			# assume the other rtsp downloading task is running
 			sleep DEF_POLLING_PERIOD
 			count += 1
 			if count % timingDo == 0 then
@@ -166,7 +253,8 @@ end
 
 options = {
 	:configFile => "config.json",
-	:quaterPeriod => 3600
+	:quaterPeriod => 3600,
+	:restartTime => nil
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -179,17 +267,28 @@ opt_parser = OptionParser.new do |opts|
 	opts.on("-q", "--quaterPeriod=", "Set quarter period sec. (default:#{options[:quaterPeriod]})") do |quaterPeriod|
 		options[:quaterPeriod] = quaterPeriod.to_i
 	end
+
+	opts.on("-r", "--restartTime=", "Set restart time (crontab style:m h dom mon dow) e.g.:\"0 5 * * *\" (default:#{options[:restartTime]})") do |restartTime|
+		options[:restartTime] = restartTime
+	end
 end.parse!
 
-
 config = JsonUtil.loadJsonFile( options[:configFile], false, true)
-taskMan = ThreadPool.new( config.length + 1)
 
-config.each do | key, aCamera |
-	taskMan.addTask( RstpDownloader.new( aCamera ) )
+if config.empty? then
+	puts "Please have config file. \"#{options[:configFile]}\""
+else
+	taskMan = ThreadPool.new( config.length + 2 )
+
+	config.each do | key, aCamera |
+		taskMan.addTask( RtspDownloader.new( aCamera ) )
+	end
+
+	cronFields = CronUtil.parse( options[:restartTime] )
+	taskMan.addTask( ShutdownTaskToRestart.new( cronFields ) ) if cronFields!=nil
+
+	taskMan.addTask( FileQuater.new( config, taskMan, options[:quaterPeriod] ) )
+
+	taskMan.executeAll()
+	taskMan.finalize()
 end
-taskMan.addTask( FileQuater.new( config, taskMan, options[:quaterPeriod] ) )
-
-taskMan.executeAll()
-taskMan.finalize()
-

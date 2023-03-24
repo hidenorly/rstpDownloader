@@ -1,8 +1,8 @@
 [Unit]
-Description=rstp downloader service
+Description=rtsp downloader service
 
 [Service]
-ExecStart=/usr/bin/ruby /opt/rstpdownloader/rstpDownloader.rb -c /var/opt/rstpdownloader/config.json
+ExecStart=/usr/bin/ruby /opt/rtspdownloader/rtspDownloader.rb -c /var/opt/rtspdownloader/config.json
 Restart=always
 type=simple
 
