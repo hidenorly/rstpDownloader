@@ -1,6 +1,6 @@
-# rstpDownloader
+# rtspDownloader
 
-This is downloader for rstp:// stream as .mp4.
+This is downloader for rtsp:// stream as .mp4.
 This is intended to store security camera's video stream as .mp4.
 Usually multiple security cameras are installed, then this tool supports multiple download.
 
@@ -55,19 +55,19 @@ $ sudo ./install.sh
 # Start
 
 ```
-$ sudo systemctrl start rstp_downloader
+$ sudo systemctrl start rtsp_downloader
 ```
 
 # Check
 
 ```
-$ sudo systemctrl status rstp_downloader
+$ sudo systemctrl status rtsp_downloader
 ```
 
 # Restart
 
 ```
-$ sudo systemctrl restart rstp_downloader
+$ sudo systemctrl restart rtsp_downloader
 ```
 
 
