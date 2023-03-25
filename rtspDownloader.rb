@@ -139,9 +139,10 @@ end
 
 
 class RtspDownloader < TaskAsync
-	def initialize(config)
+	def initialize(config, verbose)
 		super("RtspDownloader #{config}")
 		@config = config
+		@verbose = verbose
 	end
 
 	def buildExec()
@@ -151,8 +152,11 @@ class RtspDownloader < TaskAsync
 			pos2 = url.index("/", pos+3)
 			url = "#{url.slice(0,pos+3)}#{@config["user"]}:#{@config["password"]}@#{url.slice(pos+3,url.length)}"
 		end
-		exec_cmd = "ffmpeg -i #{url} #{@config["options"]} -flags +global_header -f segment -segment_time #{@config["duration"]} -segment_format mp4 -reset_timestamps 1  -strftime 1 #{Shellwords.escape(@config["fileFormat"])}"
-		exec_cmd += " 2>&1 > #{@config["log"]}" if !@config["log"].empty?
+		exec_cmd = "ffmpeg"
+		exec_cmd += " -loglevel quiet" if @verbose
+		exec_cmd += " -stimeout 60000000"
+		exec_cmd += " -i #{url} #{@config["options"]} -flags +global_header -f segment -segment_time #{@config["duration"]} -segment_format mp4 -reset_timestamps 1  -strftime 1 #{Shellwords.escape(@config["fileFormat"])}"
+		exec_cmd += " > #{!@config["log"].to_s.empty? ? @config["log"] : "/dev/null"} 2>&1"
 		return exec_cmd
 	end
 
@@ -254,7 +258,8 @@ end
 options = {
 	:configFile => "config.json",
 	:quaterPeriod => 3600,
-	:restartTime => nil
+	:restartTime => nil,
+	:verbose => false
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -271,6 +276,10 @@ opt_parser = OptionParser.new do |opts|
 	opts.on("-r", "--restartTime=", "Set restart time (crontab style:m h dom mon dow) e.g.:\"0 5 * * *\" (default:#{options[:restartTime]})") do |restartTime|
 		options[:restartTime] = restartTime
 	end
+
+	opts.on("-v", "--verbose", "Set verbose") do
+		options[:verbose] = true
+	end
 end.parse!
 
 config = JsonUtil.loadJsonFile( options[:configFile], false, true)
@@ -281,7 +290,7 @@ else
 	taskMan = ThreadPool.new( config.length + 2 )
 
 	config.each do | key, aCamera |
-		taskMan.addTask( RtspDownloader.new( aCamera ) )
+		taskMan.addTask( RtspDownloader.new( aCamera, options[:verbose] ) )
 	end
 
 	cronFields = CronUtil.parse( options[:restartTime] )
