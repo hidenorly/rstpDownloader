@@ -19,7 +19,7 @@ $ sudo apt install ffmpeg
 		"url":"rtsp://192.168.1.100/11",			# usually security camera /11:1st stream /12:2nd stream (down scaled)
 		"user": "admin",							# you can set "" if no user authentication
 		"password": "password",						# you can set "" if no user authentication
-		"options": "-c copy",						# try "-c:v copy" if error on audio
+		"options": "-c copy -rtsp_transport tcp -stimeout 15000000",	# try "-c:v copy" if error on audio
 		"duration": 300,							# 300sec = 5min
 		"output": "/media/data/ftproot/camera1",	# file place
 		"fileFormat": "camera1-%Y%m%d-%H%M%S.mp4",	# file format
@@ -33,7 +33,7 @@ $ sudo apt install ffmpeg
 		"url":"rtsp://192.168.1.101/11",			# usually security camera /11:1st stream /12:2nd stream (down scaled)
 		"user": "admin",							# you can set "" if no user authentication
 		"password": "password",						# you can set "" if no user authentication
-		"options": "-c:v copy",						# try "-c:v copy" if error on audio
+		"options": "-c:v copy -rtsp_transport tcp -stimeout 15000000",	# try "-c:v copy" if error on audio
 		"duration": 300,							# 300sec = 5min
 		"output": "/media/data/ftproot/camera2",	# file place
 		"fileFormat": "camera2-%Y%m%d-%H%M%S.mp4",	# file format

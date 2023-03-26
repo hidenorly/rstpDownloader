@@ -154,7 +154,6 @@ class RtspDownloader < TaskAsync
 		end
 		exec_cmd = "ffmpeg"
 		exec_cmd += " -loglevel quiet" if @verbose
-		exec_cmd += " -stimeout 60000000"
 		exec_cmd += " -i #{url} #{@config["options"]} -flags +global_header -f segment -segment_time #{@config["duration"]} -segment_format mp4 -reset_timestamps 1  -strftime 1 #{Shellwords.escape(@config["fileFormat"])}"
 		exec_cmd += " > #{!@config["log"].to_s.empty? ? @config["log"] : "/dev/null"} 2>&1"
 		return exec_cmd
@@ -195,14 +194,17 @@ end
 
 
 class FileQuater < TaskAsync
+	DEF_POLLING_PERIOD = 5
+	DEF_ERASE_MARGIN = 0.2
+
 	def initialize(configs, taskMan, period=3600)
 		super("FileQuater")
 		@configs = configs
 		@taskMan = taskMan
-		@period = period
+		@period = (period > DEF_POLLING_PERIOD) ? period : DEF_POLLING_PERIOD
 	end
 
-	def self.convertFmtToGrep(fmt)
+	def convertFmtToGrep(fmt)
 		fmt = fmt.gsub("\-", "\\-")
 		fmt = fmt.gsub("\.", "\\.")
 		fmt = fmt.gsub("%Y", "[0-9]+")
@@ -214,9 +216,6 @@ class FileQuater < TaskAsync
 		fmt = fmt.gsub("%S", "[0-9]+")
 		return fmt
 	end
-
-	DEF_POLLING_PERIOD = 5
-	DEF_ERASE_MARGIN = 0.2
 
 	def self.doQuater(path, filter, keep)
 		path = File.expand_path(path)
