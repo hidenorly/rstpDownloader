@@ -197,11 +197,12 @@ class FileQuater < TaskAsync
 	DEF_POLLING_PERIOD = 5
 	DEF_ERASE_MARGIN = 0.2
 
-	def initialize(configs, taskMan, period=3600)
+	def initialize(configs, taskMan, period=3600, verbose)
 		super("FileQuater")
 		@configs = configs
 		@taskMan = taskMan
 		@period = (period > DEF_POLLING_PERIOD) ? period : DEF_POLLING_PERIOD
+		@verbose = verbose
 	end
 
 	def convertFmtToGrep(fmt)
@@ -217,7 +218,7 @@ class FileQuater < TaskAsync
 		return fmt
 	end
 
-	def self.doQuater(path, filter, keep)
+	def doQuater(path, filter, keep)
 		path = File.expand_path(path)
 		filter = convertFmtToGrep(filter)
 
@@ -227,8 +228,11 @@ class FileQuater < TaskAsync
 
 		n = 0
 		result.each do |aResult|
-			FileUtils.rm_f(aResult) if n >= keep
-			sleep DEF_ERASE_MARGIN # This save the bandwidth of storage for actual download
+			if n >= keep then
+				puts aResult if @verbose
+				FileUtils.rm_f(aResult)
+				sleep DEF_ERASE_MARGIN # This save the bandwidth of storage for actual download
+			end
 			n = n + 1
 		end
 	end
@@ -295,7 +299,7 @@ else
 	cronFields = CronUtil.parse( options[:restartTime] )
 	taskMan.addTask( ShutdownTaskToRestart.new( cronFields ) ) if cronFields!=nil
 
-	taskMan.addTask( FileQuater.new( config, taskMan, options[:quaterPeriod] ) )
+	taskMan.addTask( FileQuater.new( config, taskMan, options[:quaterPeriod], options[:verbose] ) )
 
 	taskMan.executeAll()
 	taskMan.finalize()
