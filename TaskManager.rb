@@ -26,6 +26,8 @@ end
 class TaskManager
 	def initialize()
 		@tasks = []
+		@isRunning = false
+		@criticalSection = Mutex.new
 	end
 
 	def addTask(aTask)
@@ -33,10 +35,25 @@ class TaskManager
 	end
 
 	def executeAll
-		while !@tasks.empty? do
-			aTask = @tasks.pop()
-			aTask.execute()
-		end
+		@criticalSection.synchronize {
+			@isRunning = true
+			while !@tasks.empty? do
+				aTask = @tasks.pop()
+				aTask.execute()
+			end
+			@isRunning = false
+		}
+	end
+
+	def isRunning
+		return @isRunning
+	end
+
+	def isRemainingTasks
+		return @tasks.count > 0
+	end
+
+	def finalize
 	end
 end
 
@@ -74,7 +91,7 @@ class TaskManagerAsync < TaskManager
 		@numOfThread = numOfThread
 		@currentRunningTasks = 0
 		@threads = []
-		@criticalSection = Mutex.new
+		super()
 	end
 
 	def addTask(aTaskAsync)
@@ -85,7 +102,7 @@ class TaskManagerAsync < TaskManager
 	end
 
 	def cancelTask( aTask )
-#		@tasks.delete( aTask )
+		@tasks.delete( aTask )
 		@criticalSection.synchronize {
 			@currentRunningTasks = @currentRunningTasks - 1
 		}
@@ -199,6 +216,7 @@ class TaskPool
 
 	def erase(task)
 		@criticalSection.synchronize {
+			@task.running = false
 			@tasks.delete(task)
 		}
 	end
@@ -232,7 +250,7 @@ class TaskExecutor
 						if @task!=nil then
 							@task.running = true
 							@task.execute()
-							@task.false = true
+							@task.running = false
 						else
 							sleep 0.1
 						end
@@ -246,6 +264,7 @@ class TaskExecutor
 
 	def terminate
 		@isRunnable = false
+		@task.running = false if @task
 		@criticalSection.synchronize {
 			if @thread != nil then
 				@thread.join

@@ -129,11 +129,118 @@ class ShutdownTaskToRestart < TaskAsync
 	end
 
 	def execute
-		while( @running  ) do
+		while( @running ) do
 			sleep 1
 			exit() if CronUtil.isTriggered(@cronFields)
 		end
 		_doneTask()
+	end
+end
+
+class ConfigUtil
+	def self.convertFmtToGrep(fmt)
+		fmt = fmt.gsub("\-", "\\-")
+		fmt = fmt.gsub("\.", "\\.")
+		fmt = fmt.gsub("%Y", "[0-9]+")
+		fmt = fmt.gsub("%y", "[0-9]+")
+		fmt = fmt.gsub("%m", "[0-9]+")
+		fmt = fmt.gsub("%d", "[0-9]+")
+		fmt = fmt.gsub("%H", "[0-9]+")
+		fmt = fmt.gsub("%M", "[0-9]+")
+		fmt = fmt.gsub("%S", "[0-9]+")
+		return fmt
+	end
+
+	def self.getFileRelatedFromConfig(configs)
+		results = []
+		configs.each do | key, aCamera |
+			results << {:output=>aCamera["output"], :fileFormat=>aCamera["fileFormat"], :keep=>aCamera["keep"].to_i}
+		end
+		return results
+	end
+
+	def self.getOutputPathsFromConfig(configs)
+		results = []
+		configs.each do | key, aCamera |
+			results << aCamera["output"]
+		end
+		return results
+	end
+end
+
+
+
+class DirectoryWatcher < TaskAsync
+	def initialize(targetDirs, timeOut=300)
+		super("DirectoryWatcher")
+		@timeOut = timeOut
+		@files = {}
+		targetDirs.each do |aTargetDir|
+			@files[aTargetDir]=[]
+		end
+		@enable = true
+	end
+
+	def checkNewFilesAddedFromLast(path)
+		files = Dir.entries(path)
+		delta = files - @files[path]
+		result = !delta.empty?
+		@files[path] = files
+		return result
+	end
+
+	def cancel
+		@enable = false
+	end
+
+	def onTimeOut(path)
+		puts "Timeout:#{path}!!!"
+	end
+
+	def execute
+		i = 1
+		while( @enable ) do
+			# assume the other rstp downloading task is running
+			sleep 1
+			if i % @timeOut == 0 then
+				@files.each do | path, files |
+					if !checkNewFilesAddedFromLast(path) then
+						# Found not new files are added. Maybe the download task is not working.
+						onTimeOut(path)
+					end
+					sleep 1 # This save the bandwidth of storage for actual download
+				end
+			end
+			i = i + 1
+		end
+		_doneTask()
+	end
+end
+
+class ProcessKillByDirectoryWatcher< DirectoryWatcher
+	attr_accessor :pid
+
+	def initialize(targetDirs, pid, timeOut=300)
+		super(targetDirs, timeOut)
+		@pid = pid
+	end
+
+	def onTimeOut(path)
+		puts "Timeout:pid=#{@pid}:path=#{path}"
+		if @pid then
+			pid = @pid
+			@pid = nil
+			begin
+				Process.kill('TERM', -pid) # Kill process group
+			rescue =>ex
+				puts "Failed to kill :#{-pid}:#{path}" if @verbose
+				begin
+					Process.kill('TERM', pid) # Kill the process group
+				rescue =>ex
+					puts "Failed to kill :#{pid}:#{path}" if @verbose
+				end
+			end
+		end
 	end
 end
 
@@ -153,10 +260,63 @@ class RtspDownloader < TaskAsync
 			url = "#{url.slice(0,pos+3)}#{@config["user"]}:#{@config["password"]}@#{url.slice(pos+3,url.length)}"
 		end
 		exec_cmd = "ffmpeg"
-		exec_cmd += " -loglevel quiet" if @verbose
-		exec_cmd += " -i #{url} #{@config["options"]} -flags +global_header -f segment -segment_time #{@config["duration"]} -segment_format mp4 -reset_timestamps 1  -strftime 1 #{Shellwords.escape(@config["fileFormat"])}"
+		exec_cmd += " -loglevel quiet" if !@verbose
+#		exec_cmd += " -i #{url} #{@config["options"]} -flags +global_header -f segment -segment_time #{@config["duration"]} -segment_format mp4 -reset_timestamps 1  -strftime 1 #{Shellwords.escape(@config["fileFormat"])}"
+		exec_cmd += " -i #{url} #{@config["options"]} -flags +global_header -f segment -segment_time #{@config["duration"]} -segment_format mp4 -reset_timestamps 1  -strftime 1 #{@config["fileFormat"]}"
 		exec_cmd += " > #{!@config["log"].to_s.empty? ? @config["log"] : "/dev/null"} 2>&1"
 		return exec_cmd
+	end
+
+	def escape_arg(arg)
+		arg = arg.to_s
+		arg = arg.gsub(/(?=[^a-zA-Z0-9_.\/\-\x7f-\xff\n])/n, '\\')
+		arg = arg.gsub("'", "'\\\\''")
+		return "'#{arg}'"
+	end
+
+	def getArgsAndOptions(exec_cmd)
+		## Replace /dev/null and 2>&1 with options
+		exec_cmd = exec_cmd.gsub('>/dev/null 2>&1', '').gsub('> /dev/null 2>&1', '').gsub('>\\ /dev/null 2>&1', '')
+		options = {}
+		if exec_cmd.include?('>/dev/null')
+			options[:out] = '/dev/null'
+		end
+		cmd_args = Shellwords.shellsplit(exec_cmd).map { |arg| escape_arg(arg) }
+		return cmd_args, options
+	end
+
+	def execCmd(command, execPath=".", quiet=true)
+		result = nil
+		if File.directory?(execPath) then
+			exec_cmd = command
+			exec_cmd += " > /dev/null 2>&1" if quiet && !exec_cmd.include?("> /dev/null")
+
+			# convert to array to avoid sh execution (=avoid process group under sh)
+#			cmd_array, options = getArgsAndOptions(exec_cmd)
+
+			## Replace /dev/null and 2>&1 with options
+			options = {:pgroup=>true, :chdir=>execPath}
+			if exec_cmd =~ /(\s+>+\s*)([^&\s]+)/
+			  options[:out] = $2
+			  exec_cmd.gsub!($1 + $2, '')
+			end
+			if exec_cmd =~ /(\s+2>&1)/
+			  options[:err] = options[:out] || :err
+			  exec_cmd.gsub!($1, '')
+			end
+
+			## Split command into array
+			cmd_array = []
+			exec_cmd.scan(/"(.*?)"|'(.*?)'|(\S+)/) do |match|
+			  cmd_array << (match[0] || match[1] || match[2])
+			end
+
+			result = Process.spawn(*cmd_array, options)
+			result = Process.getpgid(result) if result
+		else
+			puts "#{execPath} is invalid" if @verbose
+		end
+		return result
 	end
 
 	def execute
@@ -164,6 +324,7 @@ class RtspDownloader < TaskAsync
 		outputPath = @config["output"]
 		FileUtil.ensureDirectory(outputPath)
 
+		# ensure retry related values
 		sleepDuration = @config["errorSleep"].to_i
 		retryCount = @config["errorRetyCount"].to_i
 		retryEnabled = @config["errorRetry"].to_s.downcase.strip == "enable"
@@ -172,11 +333,36 @@ class RtspDownloader < TaskAsync
 			sleepDuration = 0
 		end
 
+		# setup new file checker
+
+		# do download with retry
 		for i in 0..retryCount
-			result = ExecUtil.execCmd(exec_cmd, outputPath)
-			i = 0 if retryEnabled && result # If sucess, the retry count is clear
-			sleep sleepDuration
+			pid = execCmd(exec_cmd, outputPath)
+			puts "#{pid}:#{exec_cmd}"
+			break if !pid
+
+			@watcher = ThreadPool.new(1)
+			watcherTask = ProcessKillByDirectoryWatcher.new( [outputPath], pid, (@config["duration"].to_f*1.5) )
+			@watcher.addTask( watcherTask ) if retryEnabled
+			@watcher.executeAll()
+
+			pid, status = Process.wait2(pid)
+
+			watcherTask.cancel()
+			@watcher.terminate()
+			@watcher.finalize()
+
+			if retryEnabled then
+				i = 0 if status.success? && !status.signaled? # If success, the retry count is clear
+				sleep sleepDuration
+				puts "Retry:#{status.success?},#{status.signaled?}:#{exec_cmd}" if @verbose
+			end
 		end
+		puts "End:pid=\"#{pid}\":#{exec_cmd}" if @verbose
+
+		# finalize watcher
+		@watcher = nil
+
 		_doneTask()
 	end
 end
@@ -199,28 +385,15 @@ class FileQuater < TaskAsync
 
 	def initialize(configs, taskMan, period=3600, verbose)
 		super("FileQuater")
-		@configs = configs
+		@configs = ConfigUtil.getFileRelatedFromConfig(configs)
 		@taskMan = taskMan
 		@period = (period > DEF_POLLING_PERIOD) ? period : DEF_POLLING_PERIOD
 		@verbose = verbose
 	end
 
-	def convertFmtToGrep(fmt)
-		fmt = fmt.gsub("\-", "\\-")
-		fmt = fmt.gsub("\.", "\\.")
-		fmt = fmt.gsub("%Y", "[0-9]+")
-		fmt = fmt.gsub("%y", "[0-9]+")
-		fmt = fmt.gsub("%m", "[0-9]+")
-		fmt = fmt.gsub("%d", "[0-9]+")
-		fmt = fmt.gsub("%H", "[0-9]+")
-		fmt = fmt.gsub("%M", "[0-9]+")
-		fmt = fmt.gsub("%S", "[0-9]+")
-		return fmt
-	end
-
 	def doQuater(path, filter, keep)
 		path = File.expand_path(path)
-		filter = convertFmtToGrep(filter)
+		filter = ConfigUtil.convertFmtToGrep(filter)
 
 		result = []
 		FileUtil.iteratePath( path, filter, result, false, false, 1)
@@ -229,7 +402,7 @@ class FileQuater < TaskAsync
 		n = 0
 		result.each do |aResult|
 			if n >= keep then
-				puts aResult if @verbose
+				puts "FileQuater:remove #{aResult}" if @verbose
 				FileUtils.rm_f(aResult)
 				sleep DEF_ERASE_MARGIN # This save the bandwidth of storage for actual download
 			end
@@ -242,14 +415,14 @@ class FileQuater < TaskAsync
 		timingDo = @period / DEF_POLLING_PERIOD
 		count = 0
 
-		while( @taskMan.getNumberOfRunningTasks() > 1 ) do
+		while( @taskMan.getNumberOfRunningTasks() > 0 ) do
 			# assume the other rtsp downloading task is running
 			sleep DEF_POLLING_PERIOD
 			count += 1
 			if count % timingDo == 0 then
 				# this is timing to do quater
-				@configs.each do | key, aCamera |
-					doQuater( aCamera["output"], aCamera["fileFormat"], aCamera["keep"].to_i )
+				@configs.each do | aCamera |
+					doQuater( aCamera[:output], aCamera[:fileFormat], aCamera[:keep] )
 					sleep DEF_POLLING_PERIOD
 				end
 			end
@@ -290,17 +463,21 @@ config = JsonUtil.loadJsonFile( options[:configFile], false, true)
 if config.empty? then
 	puts "Please have config file. \"#{options[:configFile]}\""
 else
-	taskMan = ThreadPool.new( config.length + 2 )
-
+	taskMan = ThreadPool.new( config.length )
 	config.each do | key, aCamera |
 		taskMan.addTask( RtspDownloader.new( aCamera, options[:verbose] ) )
 	end
 
+	taskManManager = ThreadPool.new()
 	cronFields = CronUtil.parse( options[:restartTime] )
-	taskMan.addTask( ShutdownTaskToRestart.new( cronFields ) ) if cronFields!=nil
+	taskManManager.addTask( ShutdownTaskToRestart.new( cronFields ) ) if cronFields!=nil
+	taskManManager.addTask( FileQuater.new( config, taskMan, options[:quaterPeriod], options[:verbose] ) )
 
-	taskMan.addTask( FileQuater.new( config, taskMan, options[:quaterPeriod], options[:verbose] ) )
-
+	taskManManager.executeAll()
 	taskMan.executeAll()
 	taskMan.finalize()
+	puts "End:downloader tasks" if options[:verbose]
+
+	taskManManager.terminate()
+	taskManManager.finalize()
 end
