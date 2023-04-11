@@ -171,7 +171,7 @@ end
 
 
 class DirectoryWatcher < TaskAsync
-	def initialize(targetDirs, timeOut=300)
+	def initialize(targetDirs, timeOut=300, stopByTimeOut=true)
 		super("DirectoryWatcher")
 		@timeOut = timeOut
 		@files = {}
@@ -179,6 +179,7 @@ class DirectoryWatcher < TaskAsync
 			@files[aTargetDir]=[]
 		end
 		@enable = true
+		@stopByTimeOut = stopByTimeOut
 	end
 
 	def checkNewFilesAddedFromLast(path)
@@ -203,13 +204,16 @@ class DirectoryWatcher < TaskAsync
 			# assume the other rstp downloading task is running
 			sleep 1
 			if i % @timeOut == 0 then
+				foundTimeOut = false
 				@files.each do | path, files |
 					if !checkNewFilesAddedFromLast(path) then
 						# Found not new files are added. Maybe the download task is not working.
 						onTimeOut(path)
+						foundTimeOut = true
 					end
 					sleep 1 # This save the bandwidth of storage for actual download
 				end
+				break if @stopByTimeOut && foundTimeOut
 			end
 			i = i + 1
 		end
@@ -220,8 +224,8 @@ end
 class ProcessKillByDirectoryWatcher< DirectoryWatcher
 	attr_accessor :pid
 
-	def initialize(targetDirs, pid, timeOut=300)
-		super(targetDirs, timeOut)
+	def initialize(targetDir, pid, timeOut=300)
+		super([targetDir], timeOut, true)
 		@pid = pid
 	end
 
@@ -235,7 +239,7 @@ class ProcessKillByDirectoryWatcher< DirectoryWatcher
 			rescue =>ex
 				puts "Failed to kill :#{-pid}:#{path}" if @verbose
 				begin
-					Process.kill('TERM', pid) # Kill the process group
+					Process.kill('TERM', pid) # Kill the group
 				rescue =>ex
 					puts "Failed to kill :#{pid}:#{path}" if @verbose
 				end
@@ -336,26 +340,29 @@ class RtspDownloader < TaskAsync
 		# setup new file checker
 
 		# do download with retry
+		pid = nil
 		for i in 0..retryCount
 			pid = execCmd(exec_cmd, outputPath)
-			puts "#{pid}:#{exec_cmd}"
-			break if !pid
+			status = nil
+			puts "Start:#{pid}:#{exec_cmd}"
 
-			@watcher = ThreadPool.new(1)
-			watcherTask = ProcessKillByDirectoryWatcher.new( [outputPath], pid, (@config["duration"].to_f*1.5) )
-			@watcher.addTask( watcherTask ) if retryEnabled
-			@watcher.executeAll()
+			if pid then
+				@watcher = ThreadPool.new(1)
+				watcherTask = ProcessKillByDirectoryWatcher.new( outputPath, pid, (@config["duration"].to_f*1.5) )
+				@watcher.addTask( watcherTask ) if retryEnabled
+				@watcher.executeAll()
 
-			pid, status = Process.wait2(pid)
+				pid, status = Process.wait2(pid)
 
-			watcherTask.cancel()
-			@watcher.terminate()
-			@watcher.finalize()
+				watcherTask.cancel()
+				@watcher.terminate()
+				@watcher.finalize()
+			end
 
 			if retryEnabled then
-				i = 0 if status.success? && !status.signaled? # If success, the retry count is clear
+				i = 0 if status && (status.success? || status.signaled?) # If success or process killer, the retry count is clear
 				sleep sleepDuration
-				puts "Retry:#{status.success?},#{status.signaled?}:#{exec_cmd}" if @verbose
+				puts "Retry:#{i}:#{status}:#{exec_cmd}" if @verbose
 			end
 		end
 		puts "End:pid=\"#{pid}\":#{exec_cmd}" if @verbose
