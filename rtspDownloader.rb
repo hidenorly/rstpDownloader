@@ -224,27 +224,45 @@ end
 class ProcessKillByDirectoryWatcher< DirectoryWatcher
 	attr_accessor :pid
 
-	def initialize(targetDir, pid, timeOut=300)
+	def initialize(targetDir, pid, timeOut=300, enableExitIfFail=false)
 		super([targetDir], timeOut, true)
 		@pid = pid
+		@enableExitIfFail = enableExitIfFail
+	end
+
+	def pid_exists?(pid)
+		#system("kill -0 #{pid} >/dev/null 2>&1")
+		begin
+			return Process::kill(0, pid) ? true : false
+		rescue =>ex
+		end
+		return false
+	end
+
+	def killProces(pid, enableExitIfFail=true)
+		if pid then
+			begin
+				Process.detach(pid)
+				Process.kill('TERM', -pid) # Kill process group
+			rescue =>ex
+				begin
+					Process.kill('TERM', pid) if pid_exists?(pid) # Kill the pid
+				rescue =>ex
+				end
+			end
+			# Just in case
+			exec_cmd = "kill -9 #{pid}"
+			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if pid_exists?(pid)
+			exec_cmd = "sudo kill -9 #{pid}"
+			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if pid_exists?(pid)
+			exit() if enableExitIfFail && pid_exists?(pid) # Sorry that we can't kill it then die!
+		end
 	end
 
 	def onTimeOut(path)
 		puts "Timeout:pid=#{@pid}:path=#{path}"
-		if @pid then
-			pid = @pid
-			@pid = nil
-			begin
-				Process.kill('TERM', -pid) # Kill process group
-			rescue =>ex
-				puts "Failed to kill :#{-pid}:#{path}" if @verbose
-				begin
-					Process.kill('TERM', pid) # Kill the group
-				rescue =>ex
-					puts "Failed to kill :#{pid}:#{path}" if @verbose
-				end
-			end
-		end
+		killProces(@pid, @enableExitIfFail)
+		@pid = nil
 	end
 end
 
@@ -289,7 +307,7 @@ class RtspDownloader < TaskAsync
 		return cmd_args, options
 	end
 
-	def execCmd(command, execPath=".", quiet=true)
+	def execCmd(command, execPath=".", runas=nil, quiet=true)
 		result = nil
 		if File.directory?(execPath) then
 			exec_cmd = command
@@ -298,8 +316,10 @@ class RtspDownloader < TaskAsync
 			# convert to array to avoid sh execution (=avoid process group under sh)
 #			cmd_array, options = getArgsAndOptions(exec_cmd)
 
-			## Replace /dev/null and 2>&1 with options
 			options = {:pgroup=>true, :chdir=>execPath}
+			options[:uid] = options[:gid] = runas if runas
+
+			## Replace /dev/null and 2>&1 with options
 			if exec_cmd =~ /(\s+>+\s*)([^&\s]+)/
 			  options[:out] = $2
 			  exec_cmd.gsub!($1 + $2, '')
@@ -315,7 +335,14 @@ class RtspDownloader < TaskAsync
 			  cmd_array << (match[0] || match[1] || match[2])
 			end
 
-			result = Process.spawn(*cmd_array, options)
+			begin
+				result = Process.spawn(*cmd_array, options)
+			rescue => ex
+				# retry without uid and gid
+				options.delete(:uid) if options.has_key?(:uid)
+				options.delete(:gid) if options.has_key?(:gid)
+				result = Process.spawn(*cmd_array, options)
+			end
 			result = Process.getpgid(result) if result
 		else
 			puts "#{execPath} is invalid" if @verbose
@@ -336,19 +363,21 @@ class RtspDownloader < TaskAsync
 			retryCount = 1
 			sleepDuration = 0
 		end
+		runas = nil
+		runas = @config["runas"] if @config.has_key?("runas")
 
 		# setup new file checker
 
 		# do download with retry
 		pid = nil
 		for i in 0..retryCount
-			pid = execCmd(exec_cmd, outputPath)
+			pid = execCmd(exec_cmd, outputPath, runas)
 			status = nil
 			puts "Start:#{pid}:#{exec_cmd}"
 
 			if pid then
 				@watcher = ThreadPool.new(1)
-				watcherTask = ProcessKillByDirectoryWatcher.new( outputPath, pid, (@config["duration"].to_f*1.5) )
+				watcherTask = ProcessKillByDirectoryWatcher.new( outputPath, pid, (@config["duration"].to_f*1.5), retryEnabled )
 				@watcher.addTask( watcherTask ) if retryEnabled
 				@watcher.executeAll()
 

@@ -11,6 +11,20 @@ Usually multiple security cameras are installed, then this tool supports multipl
 $ sudo apt install ffmpeg
 ```
 
+# Storage
+
+You need to prepare high endurance storage such as HDD.
+
+```/media/data/ftproot/``` is example path in the following ```config.json```
+
+```
+$ cd /media/data
+$ sudo chown ubuntu:ubuntu ftproot/ -R
+```
+
+You need to ensure the access permission if you want to run as "ubuntu" as same as the following ```config.json``` example.
+
+
 # Config
 
 ```config.json
@@ -19,7 +33,8 @@ $ sudo apt install ffmpeg
 		"url":"rtsp://192.168.1.100/11",			# usually security camera /11:1st stream /12:2nd stream (down scaled)
 		"user": "admin",							# you can set "" if no user authentication
 		"password": "password",						# you can set "" if no user authentication
-		"options": "-c copy -rtsp_transport tcp -stimeout 15000000",	# try "-c:v copy" if error on audio
+		"runas": "ubuntu",							# set as-user to run ffmpeg. if you want to run same user of this, you can remove this line or set ""
+		"options": "-c copy",						# try "-c:v copy" if error on audio
 		"duration": 300,							# 300sec = 5min
 		"output": "/media/data/ftproot/camera1",	# file place
 		"fileFormat": "camera1-%Y%m%d-%H%M%S.mp4",	# file format
@@ -33,7 +48,8 @@ $ sudo apt install ffmpeg
 		"url":"rtsp://192.168.1.101/11",			# usually security camera /11:1st stream /12:2nd stream (down scaled)
 		"user": "admin",							# you can set "" if no user authentication
 		"password": "password",						# you can set "" if no user authentication
-		"options": "-c:v copy -rtsp_transport tcp -stimeout 15000000",	# try "-c:v copy" if error on audio
+		"runas": "ubuntu",							# set as-user to run ffmpeg. if you want to run same user of this, you can remove this line or set ""
+		"options": "-c:v copy",						# try "-c:v copy" if error on audio. May add  "-rtsp_transport tcp -stimeout 15000000"
 		"duration": 300,							# 300sec = 5min
 		"output": "/media/data/ftproot/camera2",	# file place
 		"fileFormat": "camera2-%Y%m%d-%H%M%S.mp4",	# file format
@@ -90,4 +106,5 @@ $ systemctl restart rtsp_downloader
 * [x] Add ubuntu's service to manage with systemctl
 * [x] Add installer
 * [x] Add keep files (disk quota) to enable cyclic store
+* [x] Add killer & retry if ffmpeg's download is failed
 * [] Upload to youtube?
