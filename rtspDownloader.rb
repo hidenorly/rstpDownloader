@@ -381,7 +381,11 @@ class RtspDownloader < TaskAsync
 				@watcher.addTask( watcherTask ) if retryEnabled
 				@watcher.executeAll()
 
-				pid, status = Process.wait2(pid)
+				begin
+					pid, status = Process.wait2(pid)
+				rescue => ex
+					puts "#{pid}:#{status}:#{exec_cmd}: the process wait caused exception" if @verbose
+				end
 
 				watcherTask.cancel()
 				@watcher.terminate()
