@@ -230,38 +230,10 @@ class ProcessKillByDirectoryWatcher< DirectoryWatcher
 		@enableExitIfFail = enableExitIfFail
 	end
 
-	def pid_exists?(pid)
-		#system("kill -0 #{pid} >/dev/null 2>&1")
-		begin
-			return Process::kill(0, pid) ? true : false
-		rescue =>ex
-		end
-		return false
-	end
-
-	def killProces(pid, enableExitIfFail=true)
-		if pid then
-			begin
-				Process.detach(pid)
-				Process.kill('TERM', -pid) # Kill process group
-			rescue =>ex
-				begin
-					Process.kill('TERM', pid) if pid_exists?(pid) # Kill the pid
-				rescue =>ex
-				end
-			end
-			# Just in case
-			exec_cmd = "kill -9 #{pid}"
-			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if pid_exists?(pid)
-			exec_cmd = "sudo kill -9 #{pid}"
-			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if pid_exists?(pid)
-			exit() if enableExitIfFail && pid_exists?(pid) # Sorry that we can't kill it then die!
-		end
-	end
-
 	def onTimeOut(path)
 		puts "Timeout:pid=#{@pid}:path=#{path}"
-		killProces(@pid, @enableExitIfFail)
+		killProces(@pid)
+		exit() if @enableExitIfFail && ExecUtil.pid_exists?(@pid)
 		@pid = nil
 	end
 end
@@ -289,67 +261,6 @@ class RtspDownloader < TaskAsync
 		return exec_cmd
 	end
 
-	def escape_arg(arg)
-		arg = arg.to_s
-		arg = arg.gsub(/(?=[^a-zA-Z0-9_.\/\-\x7f-\xff\n])/n, '\\')
-		arg = arg.gsub("'", "'\\\\''")
-		return "'#{arg}'"
-	end
-
-	def getArgsAndOptions(exec_cmd)
-		## Replace /dev/null and 2>&1 with options
-		exec_cmd = exec_cmd.gsub('>/dev/null 2>&1', '').gsub('> /dev/null 2>&1', '').gsub('>\\ /dev/null 2>&1', '')
-		options = {}
-		if exec_cmd.include?('>/dev/null')
-			options[:out] = '/dev/null'
-		end
-		cmd_args = Shellwords.shellsplit(exec_cmd).map { |arg| escape_arg(arg) }
-		return cmd_args, options
-	end
-
-	def execCmd(command, execPath=".", runas=nil, quiet=true)
-		result = nil
-		if File.directory?(execPath) then
-			exec_cmd = command
-			exec_cmd += " > /dev/null 2>&1" if quiet && !exec_cmd.include?("> /dev/null")
-
-			# convert to array to avoid sh execution (=avoid process group under sh)
-#			cmd_array, options = getArgsAndOptions(exec_cmd)
-
-			options = {:pgroup=>true, :chdir=>execPath}
-			options[:uid] = options[:gid] = runas if runas
-
-			## Replace /dev/null and 2>&1 with options
-			if exec_cmd =~ /(\s+>+\s*)([^&\s]+)/
-			  options[:out] = $2
-			  exec_cmd.gsub!($1 + $2, '')
-			end
-			if exec_cmd =~ /(\s+2>&1)/
-			  options[:err] = options[:out] || :err
-			  exec_cmd.gsub!($1, '')
-			end
-
-			## Split command into array
-			cmd_array = []
-			exec_cmd.scan(/"(.*?)"|'(.*?)'|(\S+)/) do |match|
-			  cmd_array << (match[0] || match[1] || match[2])
-			end
-
-			begin
-				result = Process.spawn(*cmd_array, options)
-			rescue => ex
-				# retry without uid and gid
-				options.delete(:uid) if options.has_key?(:uid)
-				options.delete(:gid) if options.has_key?(:gid)
-				result = Process.spawn(*cmd_array, options)
-			end
-			result = Process.getpgid(result) if result
-		else
-			puts "#{execPath} is invalid" if @verbose
-		end
-		return result
-	end
-
 	def execute
 		exec_cmd = buildExec()
 		outputPath = @config["output"]
@@ -371,7 +282,7 @@ class RtspDownloader < TaskAsync
 		# do download with retry
 		pid = nil
 		for i in 0..retryCount
-			pid = execCmd(exec_cmd, outputPath, runas)
+			pid = ExecUtil.spawn(exec_cmd, outputPath, runas, true, @verbose)
 			status = nil
 			puts "Start:#{pid}:#{exec_cmd}"
 

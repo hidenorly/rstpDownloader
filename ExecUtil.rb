@@ -26,6 +26,101 @@ class ExecUtil
 		return result
 	end
 
+	def self.pid_exists?(pid)
+		begin
+			return Process::kill(0, pid) ? true : false
+		rescue =>ex
+		end
+		return false
+	end
+
+	def self.killProces(pid)
+		result = false
+		if pid then
+			# try
+			begin
+				Process.detach(pid)
+				Process.kill('TERM', -pid) # Kill process group
+			rescue =>ex
+				begin
+					Process.kill('TERM', pid) if pid_exists?(pid) # Kill the pid
+				rescue =>ex
+				end
+			end
+
+			# Just in case
+			exec_cmd = "kill -9 #{pid}"
+			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if pid_exists?(pid)
+			exec_cmd = "sudo kill -9 #{pid}"
+			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if pid_exists?(pid)
+
+			# check kill is success or not
+			result = !pid_exists?(pid)
+		end
+		return result
+	end
+
+	def self.escape_arg(arg)
+		arg = arg.to_s
+		arg = arg.gsub(/(?=[^a-zA-Z0-9_.\/\-\x7f-\xff\n])/n, '\\')
+		arg = arg.gsub("'", "'\\\\''")
+		return "'#{arg}'"
+	end
+
+	def self.getArgsAndOptions(exec_cmd)
+		## Replace /dev/null and 2>&1 with options
+		exec_cmd = exec_cmd.gsub('>/dev/null 2>&1', '').gsub('> /dev/null 2>&1', '').gsub('>\\ /dev/null 2>&1', '')
+		options = {}
+		if exec_cmd.include?('>/dev/null')
+			options[:out] = '/dev/null'
+		end
+		cmd_args = Shellwords.shellsplit(exec_cmd).map { |arg| escape_arg(arg) }
+		return cmd_args, options
+	end
+
+	def self.spawn(command, execPath=".", runas=nil, quiet=true, verbose=false)
+		result = nil
+		if File.directory?(execPath) then
+			exec_cmd = command
+			exec_cmd += " > /dev/null 2>&1" if quiet && !exec_cmd.include?("> /dev/null")
+
+			# convert to array to avoid sh execution (=avoid process group under sh)
+#			cmd_array, options = getArgsAndOptions(exec_cmd)
+
+			options = {:pgroup=>true, :chdir=>execPath}
+			options[:uid] = options[:gid] = runas if runas
+
+			## Replace /dev/null and 2>&1 with options
+			if exec_cmd =~ /(\s+>+\s*)([^&\s]+)/
+			  options[:out] = $2
+			  exec_cmd.gsub!($1 + $2, '')
+			end
+			if exec_cmd =~ /(\s+2>&1)/
+			  options[:err] = options[:out] || :err
+			  exec_cmd.gsub!($1, '')
+			end
+
+			## Split command into array
+			cmd_array = []
+			exec_cmd.scan(/"(.*?)"|'(.*?)'|(\S+)/) do |match|
+			  cmd_array << (match[0] || match[1] || match[2])
+			end
+
+			begin
+				result = Process.spawn(*cmd_array, options)
+			rescue => ex
+				# retry without uid and gid
+				options.delete(:uid) if options.has_key?(:uid)
+				options.delete(:gid) if options.has_key?(:gid)
+				result = Process.spawn(*cmd_array, options)
+			end
+			result = Process.getpgid(result) if result
+		else
+			puts "#{execPath} is invalid" if verbose
+		end
+		return result
+	end
+
 	def self.hasResult?(command, execPath=".", enableStderr=true)
 		result = false
 
@@ -103,6 +198,29 @@ class ExecUtil
 		ensure
 			pio.close if pio && !pio.closed?
 			pio = nil
+		end
+
+		return result
+	end
+
+	def self.getExecResultEachLineWithInputs(command, execPath=".", inputs=[], enableStderr=true, enableStrip=true, enableMultiLine=true)
+		result = []
+
+		if File.directory?(execPath) then
+			exec_cmd = command
+			exec_cmd += " 2>&1" if enableStderr && !exec_cmd.include?(" 2>")
+
+			IO.popen(["bash", "-c", exec_cmd], "r", :chdir=>execPath) {|io|
+				inputs.each do |aLine|
+					io.puts(aLine)
+				end
+				while !io.eof? do
+					aLine = StrUtil.ensureUtf8(io.readline)
+					aLine.strip! if enableStrip
+					result << aLine
+				end
+				io.close()
+			}
 		end
 
 		return result
