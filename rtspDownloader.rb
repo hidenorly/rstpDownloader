@@ -224,16 +224,17 @@ end
 class ProcessKillByDirectoryWatcher< DirectoryWatcher
 	attr_accessor :pid
 
-	def initialize(targetDir, pid, timeOut=300, enableExitIfFail=false)
+	def initialize(targetDir, pid, timeOut=300, enableExitIfFail=false, verbose=false)
 		super([targetDir], timeOut, true)
 		@pid = pid
 		@enableExitIfFail = enableExitIfFail
+		@verbose = verbose
 	end
 
 	def onTimeOut(path)
-		puts "Timeout:pid=#{@pid}:path=#{path}"
+		puts "Timeout:pid=#{@pid}:path=#{path}" if @verbose
 		killProces(@pid)
-		exit() if @enableExitIfFail && ExecUtil.pid_exists?(@pid)
+		exit() if @enableExitIfFail && ExecUtil.processExists?(@pid)
 		@pid = nil
 	end
 end
@@ -255,7 +256,6 @@ class RtspDownloader < TaskAsync
 		end
 		exec_cmd = "ffmpeg"
 		exec_cmd += " -loglevel quiet" if !@verbose
-#		exec_cmd += " -i #{url} #{@config["options"]} -flags +global_header -f segment -segment_time #{@config["duration"]} -segment_format mp4 -reset_timestamps 1  -strftime 1 #{Shellwords.escape(@config["fileFormat"])}"
 		exec_cmd += " -i #{url} #{@config["options"]} -flags +global_header -f segment -segment_time #{@config["duration"]} -segment_format mp4 -reset_timestamps 1  -strftime 1 #{@config["fileFormat"]}"
 		exec_cmd += " > #{!@config["log"].to_s.empty? ? @config["log"] : "/dev/null"} 2>&1"
 		return exec_cmd
@@ -284,11 +284,11 @@ class RtspDownloader < TaskAsync
 		for i in 0..retryCount
 			pid = ExecUtil.spawn(exec_cmd, outputPath, runas, true, @verbose)
 			status = nil
-			puts "Start:#{pid}:#{exec_cmd}"
+			puts "Start:#{pid}:#{exec_cmd}" if @verbose
 
 			if pid then
 				@watcher = ThreadPool.new(1)
-				watcherTask = ProcessKillByDirectoryWatcher.new( outputPath, pid, (@config["duration"].to_f*1.5), retryEnabled )
+				watcherTask = ProcessKillByDirectoryWatcher.new( outputPath, pid, (@config["duration"].to_f*1.5), retryEnabled, @verbose )
 				@watcher.addTask( watcherTask ) if retryEnabled
 				@watcher.executeAll()
 
