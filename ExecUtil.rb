@@ -27,6 +27,10 @@ class ExecUtil
 	end
 
 	def self.pid_exists?(pid)
+		return processExists(pid)
+	end
+
+	def self.processExists?(pid)
 		begin
 			return Process::kill(0, pid) ? true : false
 		rescue =>ex
@@ -43,19 +47,19 @@ class ExecUtil
 				Process.kill('TERM', -pid) # Kill process group
 			rescue =>ex
 				begin
-					Process.kill('TERM', pid) if pid_exists?(pid) # Kill the pid
+					Process.kill('TERM', pid) if processExists?(pid) # Kill the pid
 				rescue =>ex
 				end
 			end
 
 			# Just in case
 			exec_cmd = "kill -9 #{pid}"
-			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if pid_exists?(pid)
+			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if processExists?(pid)
 			exec_cmd = "sudo kill -9 #{pid}"
-			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if pid_exists?(pid)
+			ExecUtil.getExecResultEachLineWithTimeout(exec_cmd, ".", 1) if processExists?(pid)
 
 			# check kill is success or not
-			result = !pid_exists?(pid)
+			result = !processExists?(pid)
 		end
 		return result
 	end
