@@ -233,7 +233,7 @@ class ProcessKillByDirectoryWatcher< DirectoryWatcher
 
 	def onTimeOut(path)
 		puts "Timeout:pid=#{@pid}:path=#{path}" if @verbose
-		killProces(@pid)
+		ExecUtil.killProcess(@pid)
 		exit() if @enableExitIfFail && ExecUtil.processExists?(@pid)
 		@pid = nil
 	end

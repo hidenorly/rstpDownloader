@@ -38,7 +38,7 @@ class ExecUtil
 		return false
 	end
 
-	def self.killProces(pid)
+	def self.killProcess(pid)
 		result = false
 		if pid then
 			# try
